@@ -45,7 +45,17 @@ const shopUi = {
   merchantCancel: document.getElementById("merchantCancel"),
   gameInventoryOverlay: document.getElementById("gameInventoryOverlay"),
   gameInventoryContent: document.getElementById("gameInventoryContent"),
-  closeGameInventory: document.getElementById("closeGameInventory")
+  closeGameInventory: document.getElementById("closeGameInventory"),
+  interactionOverlay: document.getElementById("interactionOverlay"),
+  interactionImage: document.getElementById("interactionImage"),
+  interactionText: document.getElementById("interactionText"),
+  interactionProgress: document.getElementById("interactionProgress"),
+  puzzleOverlay: document.getElementById("puzzleOverlay"),
+  puzzleImage: document.getElementById("puzzleImage"),
+  puzzleTitle: document.getElementById("puzzleTitle"),
+  puzzleInputArea: document.getElementById("puzzleInputArea"),
+  puzzleCheck: document.getElementById("puzzleCheck"),
+  puzzleClose: document.getElementById("puzzleClose")
 };
 
 const debugUi = {
@@ -54,8 +64,10 @@ const debugUi = {
   roomSelect: document.getElementById("debugRoomSelect"),
   phaseSelect: document.getElementById("debugPhaseSelect"),
   deletePhase: document.getElementById("debugDeletePhase"),
+  inheritPhase: document.getElementById("debugInheritPhase"),
   wallMode: document.getElementById("debugWallMode"),
   commentMode: document.getElementById("debugCommentMode"),
+  interactionMode: document.getElementById("debugInteractionMode"),
   doorMode: document.getElementById("debugDoorMode"),
   merchantMode: document.getElementById("debugMerchantMode"),
   candleMode: document.getElementById("debugCandleMode"),
@@ -63,7 +75,34 @@ const debugUi = {
   deleteMode: document.getElementById("debugDeleteMode"),
   undo: document.getElementById("debugUndo"),
   clear: document.getElementById("debugClear"),
-  status: document.getElementById("debugStatus")
+  status: document.getElementById("debugStatus"),
+  eventsJson: document.getElementById("debugEventsJson"),
+  saveEvents: document.getElementById("debugSaveEvents"),
+  eventsStatus: document.getElementById("debugEventsStatus"),
+  stateJson: document.getElementById("debugStateJson"),
+  saveState: document.getElementById("debugSaveState"),
+  resetRuntimeState: document.getElementById("debugResetRuntimeState"),
+  copyInitialState: document.getElementById("debugCopyInitialState"),
+  stateStatus: document.getElementById("debugStateStatus"),
+  puzzlesJson: document.getElementById("debugPuzzlesJson"),
+  savePuzzles: document.getElementById("debugSavePuzzles"),
+  puzzlesStatus: document.getElementById("debugPuzzlesStatus"),
+  selectedLabel: document.getElementById("debugSelectedLabel"),
+  objectEventId: document.getElementById("debugObjectEventId"),
+  objectEnabledCondition: document.getElementById("debugObjectEnabledCondition"),
+  objectDisabledMessage: document.getElementById("debugObjectDisabledMessage"),
+  objectRunEventBeforeMove: document.getElementById("debugObjectRunEventBeforeMove"),
+  objectPuzzleId: document.getElementById("debugObjectPuzzleId"),
+  objectPuzzleType: document.getElementById("debugObjectPuzzleType"),
+  objectPuzzleBackground: document.getElementById("debugObjectPuzzleBackground"),
+  saveInteractionEvent: document.getElementById("debugSaveInteractionEvent"),
+  deleteInteractionEvent: document.getElementById("debugDeleteInteractionEvent"),
+  saveInteractionPuzzle: document.getElementById("debugSaveInteractionPuzzle"),
+  deleteInteractionPuzzle: document.getElementById("debugDeleteInteractionPuzzle"),
+  saveObject: document.getElementById("debugSaveObject"),
+  deleteObject: document.getElementById("debugDeleteObject"),
+  clearSelection: document.getElementById("debugClearSelection"),
+  objectStatus: document.getElementById("debugObjectStatus")
 };
 
 function shortAddress(address) {
@@ -326,6 +365,7 @@ function setShopSelection(row) {
 }
 
 const mapDirectory = "../assest/map/";
+const interactionDirectory = "../assest/interactive/";
 const roomMetadata = {
   mainhall: {
     label: "Main Hall",
@@ -368,7 +408,12 @@ const game = {
   lastExitAt: 0,
   message: "",
   messageUntil: 0,
-  paused: false
+  commentTimer: null,
+  interactionTimer: null,
+  paused: false,
+  interaction: null,
+  puzzle: null,
+  puzzleInput: {}
 };
 
 const editor = {
@@ -378,36 +423,541 @@ const editor = {
   mode: "wall",
   pendingPoint: null,
   pendingDoor: null,
+  selectedObject: null,
   history: [],
   view: { x: 0, y: 0, zoom: 1 }
 };
 
 function loadDebugData() {
-  const base = {};
+  const baseRooms = {};
   Object.keys(rooms).forEach((id) => {
-      base[id] = { walls: [], comments: [], doors: [], candles: [], spawn: null, merchant: null };
+    baseRooms[id] = { phases: {} };
+    getRoomPhases(id).forEach((phase) => {
+      baseRooms[id].phases[phase] = createBlankDebugPhase();
+    });
   });
+
+  const base = {
+    rooms: baseRooms,
+    events: {},
+    puzzles: {},
+    initialState: createBlankGameState(),
+    runtimeState: createBlankGameState()
+  };
 
   try {
     const saved = JSON.parse(localStorage.getItem(storageKey) || "{}");
-    Object.keys(base).forEach((id) => {
-      base[id].walls = Array.isArray(saved[id]?.walls) ? saved[id].walls : [];
-      base[id].comments = Array.isArray(saved[id]?.comments) ? saved[id].comments : [];
-      base[id].doors = Array.isArray(saved[id]?.doors) ? saved[id].doors : [];
-      base[id].candles = Array.isArray(saved[id]?.candles) ? saved[id].candles : [];
-      base[id].spawn = saved[id]?.spawn || null;
-      base[id].merchant = id === "mainhall" ? (saved[id]?.merchant || null) : null;
-      if (base[id].merchant) {
-        base[id].merchant.bodyRadius ??= 20;
-        base[id].merchant.accessY ??= base[id].merchant.y + 34;
-        base[id].merchant.accessRadius ??= 12;
+    const savedRooms = saved.rooms && typeof saved.rooms === "object" ? saved.rooms : saved;
+
+    Object.keys(base.rooms).forEach((id) => {
+      const savedRoom = savedRooms[id] || {};
+      const savedPhases = savedRoom.phases && typeof savedRoom.phases === "object" ? savedRoom.phases : null;
+      Object.keys(base.rooms[id].phases).forEach((phase) => {
+        const phaseData = savedPhases?.[phase] || (Number(phase) === 1 ? savedRoom : null);
+        base.rooms[id].phases[phase] = normalizeDebugPhase(phaseData, id);
+      });
+
+      if (!base.rooms[id].phases[getCurrentPhase(id)]) {
+        base.rooms[id].phases[getCurrentPhase(id)] = createBlankDebugPhase();
       }
     });
+
+    base.events = normalizeEventMap(saved.events);
+    base.puzzles = normalizePuzzleMap(saved.puzzles);
+    base.initialState = normalizeGameState(saved.initialState);
+    base.runtimeState = JSON.parse(JSON.stringify(base.initialState));
+    ensureGameStateRoomPhases(base.initialState);
+    ensureGameStateRoomPhases(base.runtimeState);
   } catch {
     // Keep blank debug data if localStorage is corrupted.
   }
 
   return base;
+}
+
+function createBlankDebugPhase() {
+  return { walls: [], comments: [], interactions: [], doors: [], candles: [], spawn: null, merchant: null };
+}
+
+function createBlankGameState() {
+  return { flags: {}, items: {}, variables: {}, roomPhases: {} };
+}
+
+function normalizeGameState(state) {
+  const blank = createBlankGameState();
+  if (!state || typeof state !== "object") return blank;
+  return {
+    flags: state.flags && typeof state.flags === "object" ? state.flags : {},
+    items: state.items && typeof state.items === "object" ? state.items : {},
+    variables: state.variables && typeof state.variables === "object" ? state.variables : {},
+    roomPhases: state.roomPhases && typeof state.roomPhases === "object" ? state.roomPhases : {}
+  };
+}
+
+function ensureGameStateRoomPhases(state) {
+  Object.keys(rooms).forEach((roomId) => {
+    if (state.roomPhases[roomId] === undefined) {
+      state.roomPhases[roomId] = getCurrentPhase(roomId);
+    }
+  });
+}
+
+function normalizeEventMap(events) {
+  if (!events || typeof events !== "object") return {};
+  return Object.fromEntries(Object.entries(events).map(([id, event]) => {
+    const normalized = event && typeof event === "object" ? event : {};
+    return [id, {
+      id: normalized.id || id,
+      name: normalized.name || normalized.id || id,
+      blocks: Array.isArray(normalized.blocks) ? normalized.blocks : []
+    }];
+  }));
+}
+
+function normalizePuzzleMap(puzzles) {
+  if (!puzzles || typeof puzzles !== "object") return {};
+  return Object.fromEntries(Object.entries(puzzles).map(([id, puzzle]) => {
+    const normalized = puzzle && typeof puzzle === "object" ? puzzle : {};
+    const inferredType = normalized.successCondition?.type === "clockTimeEquals"
+      ? "clock"
+      : normalized.successCondition?.type === "pianoSequenceEquals"
+        ? "piano"
+        : normalized.successCondition?.type === "passcodeEquals"
+          ? "passcode"
+          : "generic";
+    return [id, {
+      id: normalized.id || id,
+      type: normalized.type || inferredType,
+      name: normalized.name || normalized.id || id,
+      background: normalized.background || "",
+      initialHour: Number(normalized.initialHour ?? 12),
+      initialMinute: Number(normalized.initialMinute ?? 0),
+      keys: Array.isArray(normalized.keys) ? normalized.keys : undefined,
+      successCondition: normalized.successCondition || null,
+      onSuccess: Array.isArray(normalized.onSuccess) ? normalized.onSuccess : [],
+      onFail: Array.isArray(normalized.onFail) ? normalized.onFail : []
+    }];
+  }));
+}
+
+function normalizeDebugPhase(data, roomId) {
+  const phase = createBlankDebugPhase();
+  if (!data || typeof data !== "object") return phase;
+
+  phase.walls = Array.isArray(data.walls) ? data.walls : [];
+  phase.comments = Array.isArray(data.comments) ? data.comments : [];
+  phase.interactions = Array.isArray(data.interactions)
+    ? data.interactions.map(normalizeInteraction)
+    : [];
+  phase.doors = Array.isArray(data.doors)
+    ? data.doors.map(normalizeDoor)
+    : [];
+  phase.candles = Array.isArray(data.candles) ? data.candles : [];
+  phase.spawn = data.spawn || null;
+  phase.merchant = roomId === "mainhall" ? (data.merchant || null) : null;
+
+  if (phase.merchant) {
+    phase.merchant.bodyRadius ??= 20;
+    phase.merchant.accessY ??= phase.merchant.y + 34;
+    phase.merchant.accessRadius ??= 12;
+  }
+
+  return phase;
+}
+
+function normalizeInteraction(interaction) {
+  return {
+    ...interaction,
+    enabledCondition: interaction?.enabledCondition || null,
+    eventId: interaction?.eventId || "",
+    disabledMessage: interaction?.disabledMessage || ""
+  };
+}
+
+function normalizeDoor(door) {
+  return {
+    ...door,
+    enabledCondition: door?.enabledCondition || null,
+    lockedMessage: door?.lockedMessage || "",
+    eventId: door?.eventId || "",
+    runEventBeforeMove: door?.runEventBeforeMove !== false
+  };
+}
+
+function getDebugPhaseData(roomId, phase = getCurrentPhase(roomId)) {
+  if (!debugData.rooms) {
+    debugData = {
+      rooms: debugData,
+      events: {},
+      puzzles: {},
+      initialState: createBlankGameState(),
+      runtimeState: createBlankGameState()
+    };
+  }
+  if (!debugData.rooms[roomId]) debugData.rooms[roomId] = { phases: {} };
+  if (!debugData.rooms[roomId].phases) {
+    debugData.rooms[roomId] = {
+      phases: {
+        1: normalizeDebugPhase(debugData.rooms[roomId], roomId)
+      }
+    };
+  }
+  if (!debugData.rooms[roomId].phases[phase]) {
+    debugData.rooms[roomId].phases[phase] = createBlankDebugPhase();
+  }
+  return debugData.rooms[roomId].phases[phase];
+}
+
+function copyDebugPhaseData(data, roomId) {
+  return JSON.parse(JSON.stringify(normalizeDebugPhase(data, roomId)));
+}
+
+function getRuntimeState() {
+  if (!debugData.runtimeState) debugData.runtimeState = createBlankGameState();
+  debugData.runtimeState = normalizeGameState(debugData.runtimeState);
+  ensureGameStateRoomPhases(debugData.runtimeState);
+  return debugData.runtimeState;
+}
+
+function evaluateCondition(condition) {
+  if (!condition) return true;
+  const state = getRuntimeState();
+
+  if (condition.type === "flagEquals") {
+    return Boolean(state.flags[condition.flag]) === Boolean(condition.value);
+  }
+
+  if (condition.type === "hasItem") {
+    const count = Number(condition.count ?? 1);
+    return Number(state.items[condition.itemId] || 0) >= count;
+  }
+
+  if (condition.type === "variableEquals") {
+    return state.variables[condition.name] === condition.value;
+  }
+
+  if (condition.type === "variableCompare") {
+    const left = Number(state.variables[condition.name] ?? 0);
+    const right = Number(condition.value ?? 0);
+    if (condition.op === ">") return left > right;
+    if (condition.op === ">=") return left >= right;
+    if (condition.op === "<") return left < right;
+    if (condition.op === "<=") return left <= right;
+    if (condition.op === "!=") return left !== right;
+    return left === right;
+  }
+
+  if (condition.type === "roomPhaseEquals") {
+    const roomId = condition.room || game.roomId;
+    return Number(state.roomPhases[roomId] ?? getCurrentPhase(roomId)) === Number(condition.phase);
+  }
+
+  if (condition.type === "and") {
+    return (condition.conditions || []).every(evaluateCondition);
+  }
+
+  if (condition.type === "or") {
+    return (condition.conditions || []).some(evaluateCondition);
+  }
+
+  if (condition.type === "not") {
+    return !evaluateCondition(condition.condition);
+  }
+
+  return false;
+}
+
+async function executeEvent(eventId) {
+  const event = debugData.events?.[eventId];
+  if (!event) {
+    showComment(`Event not found: ${eventId}`);
+    return;
+  }
+  try {
+    await executeBlocks(event.blocks || []);
+  } catch (error) {
+    closeAllGameOverlays();
+    showComment(`Event error: ${error?.message || String(error)}`);
+    console.error("Event execution failed", eventId, error);
+  }
+}
+
+async function executeBlocks(blocks = []) {
+  for (const block of blocks) {
+    await executeBlock(block);
+  }
+}
+
+async function executeBlock(block) {
+  if (!block || typeof block !== "object") return;
+  const state = getRuntimeState();
+
+  if (block.type === "showText") {
+    showComment(block.text || "");
+    return;
+  }
+
+  if (block.type === "addItem") {
+    const count = Number(block.count ?? 1);
+    state.items[block.itemId] = Number(state.items[block.itemId] || 0) + count;
+    saveDebugData();
+    return;
+  }
+
+  if (block.type === "removeItem") {
+    const count = Number(block.count ?? 1);
+    state.items[block.itemId] = Math.max(0, Number(state.items[block.itemId] || 0) - count);
+    saveDebugData();
+    return;
+  }
+
+  if (block.type === "setFlag") {
+    state.flags[block.flag] = Boolean(block.value);
+    saveDebugData();
+    return;
+  }
+
+  if (block.type === "setVariable") {
+    state.variables[block.name] = block.value;
+    saveDebugData();
+    return;
+  }
+
+  if (block.type === "addVariable") {
+    state.variables[block.name] = Number(state.variables[block.name] || 0) + Number(block.value || 0);
+    saveDebugData();
+    return;
+  }
+
+  if (block.type === "setRoomPhase") {
+    setRuntimeRoomPhase(block.room || game.roomId, Number(block.phase || 1));
+    saveDebugData();
+    return;
+  }
+
+  if (block.type === "changeRoom") {
+    const roomId = block.room || game.roomId;
+    if (block.phase !== undefined) setRuntimeRoomPhase(roomId, Number(block.phase));
+    setRoom(roomId, {
+      x: Number(block.x ?? rooms[roomId]?.start?.x ?? game.player.x),
+      y: Number(block.y ?? rooms[roomId]?.start?.y ?? game.player.y)
+    });
+    saveDebugData();
+    return;
+  }
+
+  if (block.type === "openPuzzle") {
+    openPuzzle(block.puzzleId);
+    return;
+  }
+
+  if (block.type === "if") {
+    await executeBlocks(evaluateCondition(block.condition) ? block.then : block.else);
+  }
+}
+
+function setRuntimeRoomPhase(roomId, phase) {
+  if (!rooms[roomId]?.phases?.[phase]) return;
+  getRuntimeState().roomPhases[roomId] = phase;
+  rooms[roomId].currentPhase = phase;
+  if (game.roomId === roomId || editor.roomId === roomId) {
+    populatePhaseSelect(roomId);
+    drawGame();
+    drawDebug();
+  }
+}
+
+function openPuzzle(puzzleId) {
+  const puzzle = debugData.puzzles?.[puzzleId];
+  if (!puzzle || !shopUi.puzzleOverlay) {
+    showComment(`Puzzle not found: ${puzzleId}`);
+    return;
+  }
+
+  hideComment();
+  closeInteraction();
+  game.paused = true;
+  game.keys.clear();
+  game.puzzle = puzzle;
+  game.puzzleInput = createPuzzleInput(puzzle);
+  shopUi.puzzleTitle.textContent = puzzle.name || puzzle.id;
+  if (puzzle.background) {
+    shopUi.puzzleImage.src = `${interactionDirectory}${puzzle.background}`;
+    shopUi.puzzleImage.alt = puzzle.name || puzzle.id;
+  } else {
+    shopUi.puzzleImage.removeAttribute("src");
+    shopUi.puzzleImage.alt = "";
+  }
+  shopUi.puzzleOverlay.hidden = false;
+  try {
+    renderPuzzleInput();
+  } catch (error) {
+    console.error("Puzzle render failed", puzzleId, puzzle, error);
+    closePuzzle();
+    showComment(`Puzzle error: ${error?.message || String(error)}`);
+  }
+}
+
+function closePuzzle() {
+  if (!shopUi.puzzleOverlay) return;
+  shopUi.puzzleOverlay.hidden = true;
+  if (shopUi.puzzleImage) shopUi.puzzleImage.removeAttribute("src");
+  if (shopUi.puzzleInputArea) shopUi.puzzleInputArea.innerHTML = "";
+  game.puzzle = null;
+  game.puzzleInput = {};
+  game.paused = false;
+}
+
+function createPuzzleInput(puzzle) {
+  if (puzzle.type === "clock") {
+    return {
+      hour: Number(puzzle.initialHour ?? 12),
+      minute: Number(puzzle.initialMinute ?? 0)
+    };
+  }
+  if (puzzle.type === "piano") {
+    return { sequence: "" };
+  }
+  if (puzzle.type === "passcode") {
+    return { code: "" };
+  }
+  return {};
+}
+
+function renderPuzzleInput() {
+  if (!shopUi.puzzleInputArea || !game.puzzle) return;
+  const puzzle = game.puzzle;
+  const input = game.puzzleInput;
+  shopUi.puzzleInputArea.innerHTML = "";
+  shopUi.puzzleInputArea.hidden = false;
+
+  if (puzzle.type === "clock") {
+    const panel = document.createElement("div");
+    panel.className = "clock-puzzle-ui";
+    panel.innerHTML = `
+      <div class="clock-face">
+        <div class="clock-hand hour-hand"></div>
+        <div class="clock-hand minute-hand"></div>
+        <div class="clock-center"></div>
+      </div>
+      <div class="puzzle-readout">${String(input.hour).padStart(2, "0")}:${String(input.minute).padStart(2, "0")}</div>
+      <div class="puzzle-stepper">
+        <button type="button" data-clock-hour="-1">Hour -</button>
+        <button type="button" data-clock-hour="1">Hour +</button>
+        <button type="button" data-clock-minute="-5">Min -</button>
+        <button type="button" data-clock-minute="5">Min +</button>
+      </div>
+    `;
+    shopUi.puzzleInputArea.appendChild(panel);
+    const hourRotation = ((input.hour % 12) * 30) + (input.minute * 0.5);
+    const minuteRotation = input.minute * 6;
+    panel.querySelector(".hour-hand").style.transform = `rotate(${hourRotation}deg)`;
+    panel.querySelector(".minute-hand").style.transform = `rotate(${minuteRotation}deg)`;
+    panel.querySelectorAll("[data-clock-hour]").forEach((button) => {
+      button.addEventListener("click", () => {
+        input.hour = ((input.hour - 1 + Number(button.dataset.clockHour) + 12) % 12) + 1;
+        renderPuzzleInput();
+      });
+    });
+    panel.querySelectorAll("[data-clock-minute]").forEach((button) => {
+      button.addEventListener("click", () => {
+        input.minute = (input.minute + Number(button.dataset.clockMinute) + 60) % 60;
+        renderPuzzleInput();
+      });
+    });
+    return;
+  }
+
+  if (puzzle.type === "piano") {
+    const keys = puzzle.keys || ["C", "D", "E", "F", "G", "A", "B"];
+    const panel = document.createElement("div");
+    panel.className = "piano-puzzle-ui";
+    panel.innerHTML = `
+      <div class="puzzle-readout">${input.sequence || "-"}</div>
+      <div class="piano-keys"></div>
+      <button type="button" class="secondary" data-piano-clear="true">Clear</button>
+    `;
+    const keysWrap = panel.querySelector(".piano-keys");
+    keys.forEach((key) => {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.textContent = key;
+      button.addEventListener("click", () => {
+        input.sequence += key;
+        renderPuzzleInput();
+      });
+      keysWrap.appendChild(button);
+    });
+    panel.querySelector("[data-piano-clear]").addEventListener("click", () => {
+      input.sequence = "";
+      renderPuzzleInput();
+    });
+    shopUi.puzzleInputArea.appendChild(panel);
+    return;
+  }
+
+  if (puzzle.type === "passcode") {
+    const panel = document.createElement("div");
+    panel.className = "passcode-puzzle-ui";
+    panel.innerHTML = `
+      <div class="puzzle-readout">${input.code || "----"}</div>
+      <div class="passcode-pad"></div>
+      <button type="button" class="secondary" data-passcode-clear="true">Clear</button>
+    `;
+    const pad = panel.querySelector(".passcode-pad");
+    "1234567890".split("").forEach((digit) => {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.textContent = digit;
+      button.addEventListener("click", () => {
+        input.code += digit;
+        renderPuzzleInput();
+      });
+      pad.appendChild(button);
+    });
+    panel.querySelector("[data-passcode-clear]").addEventListener("click", () => {
+      input.code = "";
+      renderPuzzleInput();
+    });
+    shopUi.puzzleInputArea.appendChild(panel);
+    return;
+  }
+
+  const panel = document.createElement("div");
+  panel.className = "passcode-puzzle-ui";
+  panel.innerHTML = `
+    <div class="puzzle-readout">Unsupported puzzle type: ${puzzle.type || "missing"}</div>
+  `;
+  shopUi.puzzleInputArea.appendChild(panel);
+}
+
+function isPuzzleSolved(puzzle) {
+  const condition = puzzle.successCondition || {};
+  const input = game.puzzleInput;
+  if (condition.type === "clockTimeEquals") {
+    return Number(input.hour) === Number(condition.hour) && Number(input.minute) === Number(condition.minute);
+  }
+  if (condition.type === "pianoSequenceEquals") {
+    return input.sequence === condition.sequence;
+  }
+  if (condition.type === "passcodeEquals") {
+    return input.code === String(condition.code);
+  }
+  return false;
+}
+
+async function checkPuzzle() {
+  if (!game.puzzle) return;
+  const puzzle = game.puzzle;
+  try {
+    const succeeded = isPuzzleSolved(puzzle);
+    closePuzzle();
+    await executeBlocks(succeeded ? puzzle.onSuccess : puzzle.onFail);
+  } catch (error) {
+    console.error("Puzzle check failed", puzzle, error);
+    closePuzzle();
+    showComment(`Puzzle error: ${error?.message || String(error)}`);
+  }
 }
 
 function loadDisabledPhases() {
@@ -548,6 +1098,9 @@ function populatePhaseSelect(roomId) {
   if (debugUi.deletePhase) {
     debugUi.deletePhase.disabled = phases.length <= 1;
   }
+  if (debugUi.inheritPhase) {
+    debugUi.inheritPhase.disabled = phases.length <= 1;
+  }
 }
 
 function setRoomPhase(roomId, phase) {
@@ -577,6 +1130,44 @@ function deleteCurrentPhase() {
   drawDebug();
 }
 
+function inheritCurrentPhaseData() {
+  const roomId = editor.roomId;
+  const currentPhase = getCurrentPhase(roomId);
+  const sourcePhases = getRoomPhases(roomId).filter((phase) => phase !== currentPhase);
+
+  if (!sourcePhases.length) {
+    window.alert("コピー元にできる別Phaseがありません。");
+    return;
+  }
+
+  const defaultSource = sourcePhases.includes(1) ? 1 : sourcePhases[0];
+  const sourceInput = window.prompt(
+    `${rooms[roomId].label} Phase ${currentPhase} にコピーする元Phase番号を入力してください: ${sourcePhases.join(", ")}`,
+    String(defaultSource)
+  );
+  if (!sourceInput) return;
+
+  const sourcePhase = Number(sourceInput);
+  if (!sourcePhases.includes(sourcePhase)) {
+    window.alert("存在する別Phase番号を入力してください。");
+    return;
+  }
+
+  const targetData = getDebugPhaseData(roomId, currentPhase);
+  const hasTargetData = targetData.walls.length || targetData.comments.length || targetData.interactions.length || targetData.doors.length ||
+    targetData.candles.length || targetData.spawn || targetData.merchant;
+  if (hasTargetData && !window.confirm(`Phase ${currentPhase} のDebug設定を Phase ${sourcePhase} の内容で上書きしますか？`)) {
+    return;
+  }
+
+  pushDebugHistory();
+  debugData.rooms[roomId].phases[currentPhase] = copyDebugPhaseData(getDebugPhaseData(roomId, sourcePhase), roomId);
+  saveDebugData();
+  debugUi.status.textContent = `Phase ${sourcePhase} のDebug設定を Phase ${currentPhase} にコピーしました。`;
+  drawGame();
+  drawDebug();
+}
+
 function saveDebugData() {
   localStorage.setItem(storageKey, JSON.stringify(debugData));
 }
@@ -594,6 +1185,109 @@ function restoreDebugData(snapshot) {
   Object.keys(debugData).forEach((id) => delete debugData[id]);
   Object.assign(debugData, snapshot);
   saveDebugData();
+  renderDebugEditors();
+}
+
+function formatJson(value) {
+  return JSON.stringify(value, null, 2);
+}
+
+function slugifyId(value, fallback = "interaction") {
+  const slug = String(value || "")
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "_")
+    .replace(/^_+|_+$/g, "");
+  return slug || fallback;
+}
+
+function getEventPuzzleId(event) {
+  const block = event?.blocks?.find((item) => item?.type === "openPuzzle" && item.puzzleId);
+  return block?.puzzleId || "";
+}
+
+function getDefaultPuzzleIdForObject(object) {
+  return `${slugifyId(object?.label || object?.eventId || "interaction")}_puzzle`;
+}
+
+function getDefaultEventIdForObject(object) {
+  return `${slugifyId(object?.label || "interaction")}_event`;
+}
+
+function getSelectedInteractionPuzzleId(object) {
+  const eventId = debugUi.objectEventId?.value.trim() || object?.eventId || "";
+  const eventPuzzleId = getEventPuzzleId(debugData.events?.[eventId]);
+  return debugUi.objectPuzzleId?.value.trim() || eventPuzzleId || getDefaultPuzzleIdForObject(object);
+}
+
+function setEditorStatus(element, message, isError = false) {
+  if (!element) return;
+  element.textContent = message;
+  element.classList.toggle("error", isError);
+}
+
+function renderDebugEditors() {
+  if (debugUi.eventsJson) debugUi.eventsJson.value = formatJson(debugData.events || {});
+  if (debugUi.stateJson) {
+    debugUi.stateJson.value = formatJson({
+      initialState: debugData.initialState || createBlankGameState(),
+      runtimeState: debugData.runtimeState || createBlankGameState()
+    });
+  }
+  if (debugUi.puzzlesJson) debugUi.puzzlesJson.value = formatJson(debugData.puzzles || {});
+}
+
+function saveEventsFromEditor() {
+  try {
+    debugData.events = normalizeEventMap(JSON.parse(debugUi.eventsJson.value || "{}"));
+    saveDebugData();
+    renderDebugEditors();
+    setEditorStatus(debugUi.eventsStatus, "Events saved.");
+  } catch (error) {
+    setEditorStatus(debugUi.eventsStatus, `JSON error: ${error.message}`, true);
+  }
+}
+
+function saveStateFromEditor() {
+  try {
+    const parsed = JSON.parse(debugUi.stateJson.value || "{}");
+    debugData.initialState = normalizeGameState(parsed.initialState);
+    debugData.runtimeState = normalizeGameState(parsed.runtimeState);
+    ensureGameStateRoomPhases(debugData.initialState);
+    ensureGameStateRoomPhases(debugData.runtimeState);
+    saveDebugData();
+    renderDebugEditors();
+    setEditorStatus(debugUi.stateStatus, "State saved.");
+  } catch (error) {
+    setEditorStatus(debugUi.stateStatus, `JSON error: ${error.message}`, true);
+  }
+}
+
+function resetRuntimeState() {
+  debugData.runtimeState = createBlankGameState();
+  ensureGameStateRoomPhases(debugData.runtimeState);
+  saveDebugData();
+  renderDebugEditors();
+  setEditorStatus(debugUi.stateStatus, "Runtime state reset.");
+}
+
+function copyInitialStateToRuntimeState() {
+  debugData.runtimeState = JSON.parse(JSON.stringify(normalizeGameState(debugData.initialState)));
+  ensureGameStateRoomPhases(debugData.runtimeState);
+  saveDebugData();
+  renderDebugEditors();
+  setEditorStatus(debugUi.stateStatus, "Initial state copied to runtime state.");
+}
+
+function savePuzzlesFromEditor() {
+  try {
+    debugData.puzzles = normalizePuzzleMap(JSON.parse(debugUi.puzzlesJson.value || "{}"));
+    saveDebugData();
+    renderDebugEditors();
+    setEditorStatus(debugUi.puzzlesStatus, "Puzzles saved.");
+  } catch (error) {
+    setEditorStatus(debugUi.puzzlesStatus, `JSON error: ${error.message}`, true);
+  }
 }
 
 function loadRoomImages() {
@@ -628,7 +1322,7 @@ function loadRoomImages() {
 function setRoom(roomId, spawn) {
   const room = rooms[roomId];
   game.roomId = roomId;
-  const defaultSpawn = debugData[roomId]?.spawn || room.start;
+  const defaultSpawn = getDebugPhaseData(roomId).spawn || room.start;
   game.player.x = spawn?.x ?? defaultSpawn.x;
   game.player.y = spawn?.y ?? defaultSpawn.y;
   shopUi.roomName.textContent = room.label;
@@ -666,7 +1360,7 @@ function closestPointOnSegment(point, segment) {
 }
 
 function resolveWallCollisions(position) {
-  const roomData = debugData[game.roomId];
+  const roomData = getDebugPhaseData(game.roomId);
   if (!roomData) return position;
   const resolved = { ...position };
 
@@ -806,7 +1500,7 @@ function drawCandleLight(ctx, screenX, screenY, scale, time, seed = 0) {
 }
 
 function drawDebugOverlays(ctx, roomId, transform) {
-  const data = debugData[roomId];
+  const data = getDebugPhaseData(roomId);
   if (!data) return;
 
   ctx.save();
@@ -838,6 +1532,27 @@ function drawDebugOverlays(ctx, roomId, transform) {
     ctx.fillStyle = "#e8dfce";
     ctx.font = "700 14px Segoe UI, sans-serif";
     ctx.fillText("E", p.x - 4, p.y + 5);
+    ctx.restore();
+  });
+
+  data.interactions.forEach((interaction) => {
+    const p = transform.point(interaction);
+    const radius = interaction.radius * transform.scale;
+    ctx.save();
+    ctx.fillStyle = "rgba(209, 168, 95, 0.16)";
+    ctx.strokeStyle = "rgba(241, 198, 116, 0.92)";
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.arc(p.x, p.y, radius, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.stroke();
+    ctx.fillStyle = "#fff1c7";
+    ctx.font = "700 14px Segoe UI, sans-serif";
+    ctx.fillText("I", p.x - 4, p.y + 5);
+    if (interaction.label) {
+      ctx.font = "700 12px Segoe UI, sans-serif";
+      ctx.fillText(interaction.label, p.x + 12, p.y - 10);
+    }
     ctx.restore();
   });
 
@@ -921,6 +1636,309 @@ function drawDebugOverlays(ctx, roomId, transform) {
   }
 }
 
+function getSelectedDebugObject() {
+  if (!editor.selectedObject) return null;
+  const data = getDebugPhaseData(editor.selectedObject.roomId, editor.selectedObject.phase);
+  const list = editor.selectedObject.type === "interaction" ? data.interactions : data.doors;
+  const object = list?.[editor.selectedObject.index];
+  return object ? { object, list, data } : null;
+}
+
+function renderSelectedObjectPanel() {
+  const selected = getSelectedDebugObject();
+  if (!selected) {
+    if (debugUi.selectedLabel) debugUi.selectedLabel.textContent = "None";
+    if (debugUi.objectEventId) debugUi.objectEventId.value = "";
+    if (debugUi.objectEnabledCondition) debugUi.objectEnabledCondition.value = "";
+    if (debugUi.objectDisabledMessage) debugUi.objectDisabledMessage.value = "";
+    if (debugUi.objectRunEventBeforeMove) {
+      debugUi.objectRunEventBeforeMove.checked = true;
+      debugUi.objectRunEventBeforeMove.disabled = true;
+    }
+    if (debugUi.objectPuzzleId) {
+      debugUi.objectPuzzleId.value = "";
+      debugUi.objectPuzzleId.disabled = true;
+    }
+    if (debugUi.objectPuzzleType) {
+      debugUi.objectPuzzleType.value = "clock";
+      debugUi.objectPuzzleType.disabled = true;
+    }
+    if (debugUi.objectPuzzleBackground) {
+      debugUi.objectPuzzleBackground.value = "";
+      debugUi.objectPuzzleBackground.disabled = true;
+    }
+    [debugUi.saveInteractionEvent, debugUi.deleteInteractionEvent, debugUi.saveInteractionPuzzle, debugUi.deleteInteractionPuzzle]
+      .forEach((button) => {
+        if (button) button.disabled = true;
+      });
+    return;
+  }
+
+  const { object } = selected;
+  const type = editor.selectedObject.type;
+  if (debugUi.selectedLabel) {
+    debugUi.selectedLabel.textContent = `${type} #${editor.selectedObject.index} (${object.label || object.eventId || "unnamed"})`;
+  }
+  debugUi.objectEventId.value = object.eventId || "";
+  debugUi.objectEnabledCondition.value = object.enabledCondition ? formatJson(object.enabledCondition) : "";
+  debugUi.objectDisabledMessage.value = type === "door" ? (object.lockedMessage || "") : (object.disabledMessage || "");
+  debugUi.objectRunEventBeforeMove.checked = object.runEventBeforeMove !== false;
+  debugUi.objectRunEventBeforeMove.disabled = type !== "door";
+  const isInteraction = type === "interaction";
+  const linkedEvent = debugData.events?.[object.eventId || ""];
+  const puzzleId = getEventPuzzleId(linkedEvent) || getDefaultPuzzleIdForObject(object);
+  const linkedPuzzle = debugData.puzzles?.[puzzleId];
+  if (debugUi.objectPuzzleId) {
+    debugUi.objectPuzzleId.value = puzzleId;
+    debugUi.objectPuzzleId.disabled = !isInteraction;
+  }
+  if (debugUi.objectPuzzleType) {
+    debugUi.objectPuzzleType.value = linkedPuzzle?.type || "piano";
+    debugUi.objectPuzzleType.disabled = !isInteraction;
+  }
+  if (debugUi.objectPuzzleBackground) {
+    debugUi.objectPuzzleBackground.value = linkedPuzzle?.background || object.image || "";
+    debugUi.objectPuzzleBackground.disabled = !isInteraction;
+  }
+  [debugUi.saveInteractionEvent, debugUi.deleteInteractionEvent, debugUi.saveInteractionPuzzle, debugUi.deleteInteractionPuzzle]
+    .forEach((button) => {
+      if (button) button.disabled = !isInteraction;
+    });
+}
+
+function selectDebugObject(type, index) {
+  editor.selectedObject = {
+    type,
+    index,
+    roomId: editor.roomId,
+    phase: getCurrentPhase(editor.roomId)
+  };
+  renderSelectedObjectPanel();
+  setEditorStatus(debugUi.objectStatus, `${type} selected.`);
+}
+
+function clearDebugSelection() {
+  editor.selectedObject = null;
+  renderSelectedObjectPanel();
+  setEditorStatus(debugUi.objectStatus, "Selection cleared.");
+}
+
+function selectNearestEditableObject(point) {
+  const data = getDebugPhaseData(editor.roomId);
+  let best = null;
+
+  data.interactions.forEach((interaction, index) => {
+    const distance = Math.hypot(point.x - interaction.x, point.y - interaction.y);
+    if (distance <= Math.max(28, interaction.radius || 54) && (!best || distance < best.distance)) {
+      best = { type: "interaction", index, distance };
+    }
+  });
+
+  data.doors.forEach((door, index) => {
+    const distance = Math.hypot(point.x - door.x, point.y - door.y);
+    if (distance <= Math.max(28, door.radius || 56) && (!best || distance < best.distance)) {
+      best = { type: "door", index, distance };
+    }
+  });
+
+  if (!best) {
+    clearDebugSelection();
+    return false;
+  }
+  selectDebugObject(best.type, best.index);
+  return true;
+}
+
+function saveSelectedObject() {
+  const selected = getSelectedDebugObject();
+  if (!selected) {
+    setEditorStatus(debugUi.objectStatus, "No object selected.", true);
+    return;
+  }
+
+  try {
+    const conditionText = debugUi.objectEnabledCondition.value.trim();
+    selected.object.enabledCondition = conditionText ? JSON.parse(conditionText) : null;
+    selected.object.eventId = debugUi.objectEventId.value.trim();
+    if (editor.selectedObject.type === "door") {
+      selected.object.lockedMessage = debugUi.objectDisabledMessage.value.trim();
+      selected.object.runEventBeforeMove = debugUi.objectRunEventBeforeMove.checked;
+    } else {
+      selected.object.disabledMessage = debugUi.objectDisabledMessage.value.trim();
+    }
+    saveDebugData();
+    renderSelectedObjectPanel();
+    setEditorStatus(debugUi.objectStatus, "Object saved.");
+  } catch (error) {
+    setEditorStatus(debugUi.objectStatus, `Condition JSON error: ${error.message}`, true);
+  }
+}
+
+function deleteSelectedObject() {
+  const selected = getSelectedDebugObject();
+  if (!selected) {
+    setEditorStatus(debugUi.objectStatus, "No object selected.", true);
+    return;
+  }
+  pushDebugHistory();
+  selected.list.splice(editor.selectedObject.index, 1);
+  saveDebugData();
+  clearDebugSelection();
+  drawDebug();
+}
+
+function getSelectedInteractionForAssetEdit() {
+  const selected = getSelectedDebugObject();
+  if (!selected || editor.selectedObject?.type !== "interaction") {
+    setEditorStatus(debugUi.objectStatus, "Select an interaction first.", true);
+    return null;
+  }
+  return selected.object;
+}
+
+function buildDefaultPuzzle(object, puzzleId, type, background) {
+  const common = {
+    id: puzzleId,
+    type,
+    name: `${object.label || puzzleId} Puzzle`,
+    background: background || object.image || "",
+    onSuccess: [
+      { type: "setFlag", flag: `${slugifyId(object.label || puzzleId)}_solved`, value: true },
+      { type: "showText", text: "何かが変わったようだ。" }
+    ],
+    onFail: [
+      { type: "showText", text: "まだ違うようだ。" }
+    ]
+  };
+
+  if (type === "clock") {
+    return {
+      ...common,
+      initialHour: 12,
+      initialMinute: 0,
+      successCondition: { type: "clockTimeEquals", hour: 12, minute: 30 }
+    };
+  }
+
+  if (type === "passcode") {
+    return {
+      ...common,
+      successCondition: { type: "passcodeEquals", code: "1234" }
+    };
+  }
+
+  if (type === "piano") {
+    return {
+      ...common,
+      keys: ["C", "D", "E", "F", "G", "A", "B"],
+      successCondition: { type: "pianoSequenceEquals", sequence: "CEG" }
+    };
+  }
+
+  return {
+    ...common,
+    successCondition: null
+  };
+}
+
+function saveInteractionEventFromPanel() {
+  const object = getSelectedInteractionForAssetEdit();
+  if (!object) return;
+  const eventId = debugUi.objectEventId.value.trim() || getDefaultEventIdForObject(object);
+  const puzzleId = getSelectedInteractionPuzzleId(object);
+  const puzzleType = debugUi.objectPuzzleType.value || "piano";
+  const puzzleBackground = debugUi.objectPuzzleBackground.value.trim() || object.image || "";
+  const text = object.pages?.[0] || object.label || "調べてみる。";
+
+  pushDebugHistory();
+  object.eventId = eventId;
+  debugUi.objectEventId.value = eventId;
+  if (!debugData.puzzles[puzzleId]) {
+    debugData.puzzles[puzzleId] = normalizePuzzleMap({
+      [puzzleId]: buildDefaultPuzzle(object, puzzleId, puzzleType, puzzleBackground)
+    })[puzzleId];
+  }
+  debugData.events[eventId] = {
+    id: eventId,
+    name: `${object.label || eventId} Event`,
+    blocks: [
+      { type: "showText", text },
+      { type: "openPuzzle", puzzleId }
+    ]
+  };
+  saveDebugData();
+  renderSelectedObjectPanel();
+  renderDebugEditors();
+  drawDebug();
+  setEditorStatus(debugUi.objectStatus, `Event saved: ${eventId}`);
+}
+
+function deleteInteractionEventFromPanel() {
+  const object = getSelectedInteractionForAssetEdit();
+  if (!object) return;
+  const eventId = debugUi.objectEventId.value.trim() || object.eventId;
+  if (!eventId || !debugData.events?.[eventId]) {
+    setEditorStatus(debugUi.objectStatus, "Event not found.", true);
+    return;
+  }
+  if (!window.confirm(`Event "${eventId}" を削除しますか？Interactionの紐づけも外れます。`)) return;
+
+  pushDebugHistory();
+  delete debugData.events[eventId];
+  if (object.eventId === eventId) object.eventId = "";
+  saveDebugData();
+  renderSelectedObjectPanel();
+  renderDebugEditors();
+  drawDebug();
+  setEditorStatus(debugUi.objectStatus, `Event deleted: ${eventId}`);
+}
+
+function saveInteractionPuzzleFromPanel() {
+  const object = getSelectedInteractionForAssetEdit();
+  if (!object) return;
+  const puzzleId = getSelectedInteractionPuzzleId(object);
+  const type = debugUi.objectPuzzleType.value || "piano";
+  const background = debugUi.objectPuzzleBackground.value.trim() || object.image || "";
+  const existing = debugData.puzzles?.[puzzleId];
+  const defaultPuzzle = buildDefaultPuzzle(object, puzzleId, type, background);
+
+  pushDebugHistory();
+  debugData.puzzles[puzzleId] = normalizePuzzleMap({
+    [puzzleId]: {
+      ...defaultPuzzle,
+      ...existing,
+      id: puzzleId,
+      type,
+      background
+    }
+  })[puzzleId];
+  saveDebugData();
+  renderSelectedObjectPanel();
+  renderDebugEditors();
+  setEditorStatus(debugUi.objectStatus, `Puzzle saved: ${puzzleId}`);
+}
+
+function deleteInteractionPuzzleFromPanel() {
+  const object = getSelectedInteractionForAssetEdit();
+  if (!object) return;
+  const puzzleId = getSelectedInteractionPuzzleId(object);
+  if (!puzzleId || !debugData.puzzles?.[puzzleId]) {
+    setEditorStatus(debugUi.objectStatus, "Puzzle not found.", true);
+    return;
+  }
+  if (!window.confirm(`Puzzle "${puzzleId}" を削除しますか？関連EventのopenPuzzleも外します。`)) return;
+
+  pushDebugHistory();
+  delete debugData.puzzles[puzzleId];
+  Object.values(debugData.events || {}).forEach((event) => {
+    event.blocks = (event.blocks || []).filter((block) => block?.type !== "openPuzzle" || block.puzzleId !== puzzleId);
+  });
+  saveDebugData();
+  renderSelectedObjectPanel();
+  renderDebugEditors();
+  setEditorStatus(debugUi.objectStatus, `Puzzle deleted: ${puzzleId}`);
+}
+
 function drawGame() {
   if (!game.ctx || !game.canvas) return;
   if (!rooms[game.roomId]) return;
@@ -956,7 +1974,7 @@ function drawGame() {
   ctx.stroke();
   ctx.restore();
 
-  const roomDebugData = debugData[game.roomId];
+  const roomDebugData = getDebugPhaseData(game.roomId);
   const merchant = roomDebugData?.merchant;
   if (merchant) {
     const p = worldToScreen(merchant, camera);
@@ -991,16 +2009,25 @@ function gameLoop() {
 
 function nearestComment(roomId, point) {
   let best = null;
-  for (const comment of debugData[roomId]?.comments || []) {
+  for (const comment of getDebugPhaseData(roomId).comments || []) {
     const distance = Math.hypot(point.x - comment.x, point.y - comment.y);
     if (!best || distance < best.distance) best = { comment, distance };
   }
   return best;
 }
 
+function nearestInteraction(roomId, point) {
+  let best = null;
+  for (const interaction of getDebugPhaseData(roomId).interactions || []) {
+    const distance = Math.hypot(point.x - interaction.x, point.y - interaction.y);
+    if (!best || distance < best.distance) best = { interaction, distance };
+  }
+  return best;
+}
+
 function nearestDoor(roomId, point) {
   let best = null;
-  for (const door of debugData[roomId]?.doors || []) {
+  for (const door of getDebugPhaseData(roomId).doors || []) {
     const distance = Math.hypot(point.x - door.x, point.y - door.y);
     if (!best || distance < best.distance) best = { door, distance };
   }
@@ -1008,7 +2035,7 @@ function nearestDoor(roomId, point) {
 }
 
 function nearestMerchant(roomId, point) {
-  const merchant = debugData[roomId]?.merchant;
+  const merchant = getDebugPhaseData(roomId).merchant;
   if (!merchant) return null;
   return {
     merchant,
@@ -1018,15 +2045,32 @@ function nearestMerchant(roomId, point) {
 
 function showComment(text) {
   if (!shopUi.commentBox) return;
-  shopUi.commentBox.textContent = text;
+  if (game.commentTimer) clearInterval(game.commentTimer);
+  game.message = text;
   shopUi.commentBox.hidden = false;
+  shopUi.commentBox.textContent = "";
   game.messageUntil = performance.now() + 3500;
+
+  let index = 0;
+  game.commentTimer = window.setInterval(() => {
+    index += 1;
+    shopUi.commentBox.textContent = text.slice(0, index);
+    if (index >= text.length) {
+      clearInterval(game.commentTimer);
+      game.commentTimer = null;
+    }
+  }, 34);
 }
 
 function hideComment() {
   if (!shopUi.commentBox) return;
+  if (game.commentTimer) {
+    clearInterval(game.commentTimer);
+    game.commentTimer = null;
+  }
   shopUi.commentBox.hidden = true;
   shopUi.commentBox.textContent = "";
+  game.message = "";
 }
 
 function interactComment() {
@@ -1036,16 +2080,111 @@ function interactComment() {
   }
 }
 
-function interactAction() {
+function openInteraction(interaction) {
+  if (!shopUi.interactionOverlay) return;
+  game.paused = true;
+  game.keys.clear();
+  game.interaction = {
+    ...interaction,
+    page: 0,
+    pages: Array.isArray(interaction.pages) && interaction.pages.length ? interaction.pages : [""]
+  };
+  shopUi.interactionImage.src = `${interactionDirectory}${interaction.image}`;
+  shopUi.interactionImage.alt = interaction.label || "";
+  shopUi.interactionOverlay.hidden = false;
+  renderInteractionPage();
+}
+
+function renderInteractionPage() {
+  if (!game.interaction || !shopUi.interactionText) return;
+  if (game.interactionTimer) clearInterval(game.interactionTimer);
+  const page = game.interaction.page;
+  const pages = game.interaction.pages;
+  const text = pages[page] || "";
+  shopUi.interactionText.textContent = "";
+  shopUi.interactionProgress.textContent = `${page + 1} / ${pages.length}  Enter`;
+
+  let index = 0;
+  game.interactionTimer = window.setInterval(() => {
+    index += 1;
+    shopUi.interactionText.textContent = text.slice(0, index);
+    if (index >= text.length) {
+      clearInterval(game.interactionTimer);
+      game.interactionTimer = null;
+    }
+  }, 34);
+}
+
+function advanceInteraction() {
+  if (!game.interaction) return;
+  if (game.interaction.page < game.interaction.pages.length - 1) {
+    game.interaction.page += 1;
+    renderInteractionPage();
+  } else {
+    closeInteraction();
+  }
+}
+
+function closeInteraction() {
+  if (!shopUi.interactionOverlay) return;
+  if (game.interactionTimer) {
+    clearInterval(game.interactionTimer);
+    game.interactionTimer = null;
+  }
+  shopUi.interactionOverlay.hidden = true;
+  if (shopUi.interactionImage) shopUi.interactionImage.removeAttribute("src");
+  game.interaction = null;
+  game.paused = false;
+}
+
+async function runInteraction(interaction) {
+  if (!evaluateCondition(interaction.enabledCondition)) {
+    if (interaction.disabledMessage) showComment(interaction.disabledMessage);
+    return;
+  }
+  if (interaction.eventId) {
+    await executeEvent(interaction.eventId);
+    return;
+  }
+  openInteraction(interaction);
+}
+
+async function runDoor(door) {
+  if (!evaluateCondition(door.enabledCondition)) {
+    if (door.lockedMessage) {
+      showComment(door.lockedMessage);
+    }
+    return;
+  }
+
+  if (door.eventId && door.runEventBeforeMove !== false) {
+    await executeEvent(door.eventId);
+  }
+
+  game.lastExitAt = performance.now();
+  if (door.targetRoom && rooms[door.targetRoom]) {
+    setRoom(door.targetRoom, { x: door.targetX, y: door.targetY });
+  }
+
+  if (door.eventId && door.runEventBeforeMove === false) {
+    await executeEvent(door.eventId);
+  }
+}
+
+async function interactAction() {
   const door = nearestDoor(game.roomId, game.player);
   if (door && door.distance <= door.door.radius) {
-    game.lastExitAt = performance.now();
-    setRoom(door.door.targetRoom, { x: door.door.targetX, y: door.door.targetY });
+    await runDoor(door.door);
     return;
   }
   const merchant = nearestMerchant(game.roomId, game.player);
   if (merchant && merchant.distance <= merchant.merchant.accessRadius) {
     openMerchantMenu();
+    return;
+  }
+  const interaction = nearestInteraction(game.roomId, game.player);
+  if (interaction && interaction.distance <= interaction.interaction.radius) {
+    await runInteraction(interaction.interaction);
     return;
   }
   interactComment();
@@ -1082,9 +2221,15 @@ function closeGameInventory() {
   game.paused = false;
 }
 
-function activateShopView(viewId) {
+function closeAllGameOverlays() {
   closeMerchantMenu();
   closeGameInventory();
+  closeInteraction();
+  closePuzzle();
+}
+
+function activateShopView(viewId) {
+  closeAllGameOverlays();
   shopUi.tabs.forEach((item) => item.classList.toggle("active", item.dataset.view === viewId));
   shopUi.views.forEach((view) => view.classList.toggle("active", view.id === viewId));
   const activeRow = document.querySelector(`#${viewId} .shop-row.active`);
@@ -1095,7 +2240,7 @@ function setDebugMode(mode) {
   editor.mode = mode;
   editor.pendingPoint = null;
   editor.pendingDoor = null;
-  [debugUi.wallMode, debugUi.commentMode, debugUi.doorMode, debugUi.merchantMode, debugUi.candleMode, debugUi.spawnMode, debugUi.deleteMode].forEach((button) => button.classList.remove("active-tool"));
+  [debugUi.wallMode, debugUi.commentMode, debugUi.interactionMode, debugUi.doorMode, debugUi.merchantMode, debugUi.candleMode, debugUi.spawnMode, debugUi.deleteMode].forEach((button) => button.classList.remove("active-tool"));
   if (mode === "wall") {
     debugUi.wallMode.classList.add("active-tool");
     debugUi.status.textContent = "線モード: クリックで点を置くと、次の点までが当たり判定になります。";
@@ -1103,6 +2248,10 @@ function setDebugMode(mode) {
   if (mode === "comment") {
     debugUi.commentMode.classList.add("active-tool");
     debugUi.status.textContent = "コメント追加: クリックした場所に反応範囲つきコメントを置きます。";
+  }
+  if (mode === "interaction") {
+    debugUi.interactionMode.classList.add("active-tool");
+    debugUi.status.textContent = "Interaction追加: クリックした場所に一人称画像とEnter送りの説明を置きます。";
   }
   if (mode === "door") {
     debugUi.doorMode.classList.add("active-tool");
@@ -1188,7 +2337,7 @@ function drawDebug() {
 }
 
 function deleteNearestDebugItem(point) {
-  const data = debugData[editor.roomId];
+  const data = getDebugPhaseData(editor.roomId);
   let changed = false;
   let bestWall = null;
   data.walls.forEach((wall, index) => {
@@ -1208,6 +2357,12 @@ function deleteNearestDebugItem(point) {
     if (!bestDoor || distance < bestDoor.distance) bestDoor = { index, distance };
   });
 
+  let bestInteraction = null;
+  data.interactions.forEach((interaction, index) => {
+    const distance = Math.hypot(point.x - interaction.x, point.y - interaction.y);
+    if (!bestInteraction || distance < bestInteraction.distance) bestInteraction = { index, distance };
+  });
+
   const merchant = data.merchant;
   const merchantDistance = merchant ? Math.hypot(point.x - merchant.x, point.y - merchant.y) : Infinity;
   let bestCandle = null;
@@ -1221,6 +2376,9 @@ function deleteNearestDebugItem(point) {
     changed = true;
   } else if (merchant && merchantDistance <= Math.max(28, merchant.bodyRadius || 20)) {
     data.merchant = null;
+    changed = true;
+  } else if (bestInteraction && bestInteraction.distance <= Math.max(28, data.interactions[bestInteraction.index].radius)) {
+    data.interactions.splice(bestInteraction.index, 1);
     changed = true;
   } else if (bestDoor && bestDoor.distance <= Math.max(28, data.doors[bestDoor.index].radius)) {
     data.doors.splice(bestDoor.index, 1);
@@ -1240,7 +2398,12 @@ function deleteNearestDebugItem(point) {
 
 function handleDebugClick(event) {
   const point = getCanvasWorldPoint(editor.canvas, event);
-  const data = debugData[editor.roomId];
+  const data = getDebugPhaseData(editor.roomId);
+
+  if (["wall", "comment", "interaction", "door", "merchant", "candle", "spawn"].includes(editor.mode) && selectNearestEditableObject(point)) {
+    drawDebug();
+    return;
+  }
 
   if (editor.mode === "wall") {
     if (!editor.pendingPoint) {
@@ -1268,6 +2431,34 @@ function handleDebugClick(event) {
       });
       saveDebugData();
     }
+  } else if (editor.mode === "interaction") {
+    const label = window.prompt("Interaction名を入力してください", "Piano");
+    if (label) {
+      const image = window.prompt("assest/interactive 内の画像ファイル名を入力してください", `${label.toLowerCase().replace(/\s+/g, "")}.png`);
+      if (!image) {
+        drawDebug();
+        return;
+      }
+      const text = window.prompt("説明文を入力してください。Enter送りは | で区切れます", "古いピアノだ。|鍵盤には埃が積もっている。");
+      if (!text) {
+        drawDebug();
+        return;
+      }
+      const eventId = window.prompt("紐づけるEvent ID（空なら通常Interaction）", "");
+      pushDebugHistory();
+      data.interactions.push({
+        x: Math.round(point.x),
+        y: Math.round(point.y),
+        radius: 54,
+        label,
+        image,
+        pages: text.split("|").map((page) => page.trim()).filter(Boolean),
+        enabledCondition: null,
+        eventId: eventId?.trim() || "",
+        disabledMessage: ""
+      });
+      saveDebugData();
+    }
   } else if (editor.mode === "door") {
     if (!editor.pendingDoor) {
       const roomIds = Object.keys(rooms);
@@ -1284,7 +2475,11 @@ function handleDebugClick(event) {
         y: Math.round(point.y),
         radius: 56,
         label,
-        targetRoom
+        targetRoom,
+        enabledCondition: null,
+        lockedMessage: "",
+        eventId: "",
+        runEventBeforeMove: true
       };
       editor.roomId = targetRoom;
       debugUi.roomSelect.value = targetRoom;
@@ -1294,7 +2489,7 @@ function handleDebugClick(event) {
     } else {
       const sourceRoom = editor.pendingDoor.sourceRoom;
       pushDebugHistory();
-      debugData[sourceRoom].doors.push({
+      getDebugPhaseData(sourceRoom).doors.push({
         ...editor.pendingDoor,
         targetX: Math.round(point.x),
         targetY: Math.round(point.y)
@@ -1365,15 +2560,19 @@ function undoDebug() {
     }
     restoreDebugData(snapshot);
   }
+  renderSelectedObjectPanel();
   drawDebug();
 }
 
 function clearDebugRoom() {
-  if (!window.confirm(`${rooms[editor.roomId].label} のデバッグ設定を全部消しますか？`)) return;
+  const phase = getCurrentPhase(editor.roomId);
+  if (!window.confirm(`${rooms[editor.roomId].label} Phase ${phase} のデバッグ設定を全部消しますか？`)) return;
   pushDebugHistory();
-  debugData[editor.roomId] = { walls: [], comments: [], doors: [], candles: [], spawn: null, merchant: null };
+  getDebugPhaseData(editor.roomId, phase);
+  debugData.rooms[editor.roomId].phases[phase] = createBlankDebugPhase();
   editor.pendingPoint = null;
   editor.pendingDoor = null;
+  clearDebugSelection();
   saveDebugData();
   drawDebug();
 }
@@ -1415,6 +2614,7 @@ async function initializeMapSystem() {
   disabledPhases = loadDisabledPhases();
   await discoverRooms();
   debugData = loadDebugData();
+  saveDebugData();
   populateRoomSelect();
 
   const initialRoomId = rooms.mainhall ? "mainhall" : Object.keys(rooms)[0];
@@ -1428,6 +2628,7 @@ async function initializeMapSystem() {
 
   loadRoomImages();
   setRoom(initialRoomId);
+  renderDebugEditors();
   drawDebug();
 }
 
@@ -1453,11 +2654,17 @@ if (game.canvas) {
   window.addEventListener("keydown", (event) => {
     const key = event.key.toLowerCase();
     if (key === "escape") {
-      closeMerchantMenu();
-      closeGameInventory();
+      closeAllGameOverlays();
+      return;
+    }
+    if (key === "enter" && game.interaction) {
+      event.preventDefault();
+      advanceInteraction();
+      return;
     }
     if (key === "i") {
       event.preventDefault();
+      if (game.interaction) return;
       if (shopUi.gameInventoryOverlay && !shopUi.gameInventoryOverlay.hidden) {
         closeGameInventory();
       } else {
@@ -1490,8 +2697,10 @@ if (editor.canvas) {
     setRoomPhase(editor.roomId, Number(debugUi.phaseSelect.value));
   });
   debugUi.deletePhase?.addEventListener("click", deleteCurrentPhase);
+  debugUi.inheritPhase?.addEventListener("click", inheritCurrentPhaseData);
   debugUi.wallMode.addEventListener("click", () => setDebugMode("wall"));
   debugUi.commentMode.addEventListener("click", () => setDebugMode("comment"));
+  debugUi.interactionMode.addEventListener("click", () => setDebugMode("interaction"));
   debugUi.doorMode.addEventListener("click", () => setDebugMode("door"));
   debugUi.merchantMode.addEventListener("click", () => setDebugMode("merchant"));
   debugUi.candleMode.addEventListener("click", () => setDebugMode("candle"));
@@ -1499,10 +2708,23 @@ if (editor.canvas) {
   debugUi.deleteMode.addEventListener("click", () => setDebugMode("delete"));
   debugUi.undo.addEventListener("click", undoDebug);
   debugUi.clear.addEventListener("click", clearDebugRoom);
+  debugUi.saveEvents?.addEventListener("click", saveEventsFromEditor);
+  debugUi.saveState?.addEventListener("click", saveStateFromEditor);
+  debugUi.resetRuntimeState?.addEventListener("click", resetRuntimeState);
+  debugUi.copyInitialState?.addEventListener("click", copyInitialStateToRuntimeState);
+  debugUi.savePuzzles?.addEventListener("click", savePuzzlesFromEditor);
+  debugUi.saveInteractionEvent?.addEventListener("click", saveInteractionEventFromPanel);
+  debugUi.deleteInteractionEvent?.addEventListener("click", deleteInteractionEventFromPanel);
+  debugUi.saveInteractionPuzzle?.addEventListener("click", saveInteractionPuzzleFromPanel);
+  debugUi.deleteInteractionPuzzle?.addEventListener("click", deleteInteractionPuzzleFromPanel);
+  debugUi.saveObject?.addEventListener("click", saveSelectedObject);
+  debugUi.deleteObject?.addEventListener("click", deleteSelectedObject);
+  debugUi.clearSelection?.addEventListener("click", clearDebugSelection);
   editor.canvas.addEventListener("click", handleDebugClick);
   editor.canvas.addEventListener("wheel", handleDebugWheel, { passive: false });
   window.addEventListener("keydown", handleDebugShortcut);
   setDebugMode("wall");
+  renderSelectedObjectPanel();
 }
 
 document.querySelectorAll("[data-shop-open]").forEach((button) => {
@@ -1511,6 +2733,8 @@ document.querySelectorAll("[data-shop-open]").forEach((button) => {
 
 shopUi.merchantCancel?.addEventListener("click", closeMerchantMenu);
 shopUi.closeGameInventory?.addEventListener("click", closeGameInventory);
+shopUi.puzzleCheck?.addEventListener("click", checkPuzzle);
+shopUi.puzzleClose?.addEventListener("click", closePuzzle);
 
 bind("connectWallet", connectWallet);
 bind("switchSepolia", switchToSepolia);
@@ -1539,7 +2763,3 @@ if (window.ethereum) {
   window.ethereum.on("accountsChanged", () => window.location.reload());
   window.ethereum.on("chainChanged", () => window.location.reload());
 }
-
-
-
-

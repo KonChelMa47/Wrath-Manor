@@ -129,29 +129,51 @@
             <span>Explore</span>
           </div>
           <div class="game-wrap">
-            <canvas id="gameCanvas" width="900" height="506" aria-label="2D exploration game"></canvas>
-            <div id="merchantMenu" class="merchant-game-menu" hidden>
-              <div class="merchant-menu-belt">
-                <button type="button" data-shop-open="sellView">Sell</button>
-                <button type="button" data-shop-open="buyView">Buy</button>
-                <button type="button" data-shop-open="upgradeView">Upgrade</button>
-                <button type="button" id="merchantCancel">Cancel</button>
-              </div>
-            </div>
-            <div id="gameInventoryOverlay" class="game-inventory-overlay" hidden>
-              <div class="game-inventory-panel">
-                <div class="section-header">
-                  <h2>Inventory</h2>
-                  <button id="closeGameInventory" class="secondary" type="button">Close</button>
+            <div class="game-stage">
+              <canvas id="gameCanvas" width="900" height="506" aria-label="2D exploration game"></canvas>
+              <div id="merchantMenu" class="merchant-game-menu" hidden>
+                <div class="merchant-menu-belt">
+                  <button type="button" data-shop-open="sellView">Sell</button>
+                  <button type="button" data-shop-open="buyView">Buy</button>
+                  <button type="button" data-shop-open="upgradeView">Upgrade</button>
+                  <button type="button" id="merchantCancel">Cancel</button>
                 </div>
-                <div id="gameInventoryContent" class="inventory"></div>
               </div>
+              <div id="gameInventoryOverlay" class="game-inventory-overlay" hidden>
+                <div class="game-inventory-panel">
+                  <div class="section-header">
+                    <h2>Inventory</h2>
+                    <button id="closeGameInventory" class="secondary" type="button">Close</button>
+                  </div>
+                  <div id="gameInventoryContent" class="inventory"></div>
+                </div>
+              </div>
+              <div id="interactionOverlay" class="interaction-overlay" hidden>
+                <div class="interaction-scene">
+                  <img id="interactionImage" alt="">
+                  <div class="interaction-textbox">
+                    <p id="interactionText"></p>
+                    <span id="interactionProgress">Enter</span>
+                  </div>
+                </div>
+              </div>
+              <div id="puzzleOverlay" class="puzzle-overlay" hidden>
+                <div class="puzzle-scene">
+                  <img id="puzzleImage" alt="">
+                  <div id="puzzleInputArea" class="puzzle-input-area"></div>
+                  <div class="puzzle-controls">
+                    <strong id="puzzleTitle">Puzzle</strong>
+                    <button id="puzzleCheck" type="button">Check</button>
+                    <button id="puzzleClose" type="button" class="secondary">Close</button>
+                  </div>
+                </div>
+              </div>
+              <div id="commentBox" class="comment-box" hidden></div>
             </div>
             <div class="game-hud">
-              <span>WASD / Arrow keys: Move  E: Interact  I: Inventory</span>
+              <span>WASD / Arrow keys: Move  E: Interact  I: Inventory  Esc: Close</span>
               <span id="roomHint">Left: Piano Room / Stairs: Library / Right: Dining Room</span>
             </div>
-            <div id="commentBox" class="comment-box" hidden></div>
           </div>
         </section>
 
@@ -167,8 +189,10 @@
               <label for="debugPhaseSelect">Phase</label>
               <select id="debugPhaseSelect"></select>
               <button id="debugDeletePhase" class="secondary" type="button">Delete Phase</button>
+              <button id="debugInheritPhase" class="secondary" type="button">Inherit Phase</button>
               <button id="debugWallMode" class="secondary" type="button">Collision Line</button>
               <button id="debugCommentMode" class="secondary" type="button">Comment</button>
+              <button id="debugInteractionMode" class="secondary" type="button">Interaction</button>
               <button id="debugDoorMode" class="secondary" type="button">Door</button>
               <button id="debugMerchantMode" class="secondary" type="button">Merchant</button>
               <button id="debugCandleMode" class="secondary" type="button">Candle</button>
@@ -179,6 +203,75 @@
               <p id="debugStatus">Line mode: click two points to create a collision line.</p>
             </div>
             <canvas id="debugCanvas" width="900" height="506" aria-label="debug room editor"></canvas>
+            <section class="debug-object-panel">
+              <div class="section-header">
+                <h3>Selected Object</h3>
+                <span id="debugSelectedLabel">None</span>
+              </div>
+              <div class="debug-object-grid">
+                <label for="debugObjectEventId">Event ID</label>
+                <input id="debugObjectEventId" type="text" placeholder="clock_event">
+                <label for="debugObjectEnabledCondition">Enabled Condition JSON</label>
+                <textarea id="debugObjectEnabledCondition" spellcheck="false" placeholder='{"type":"hasItem","itemId":"old_key","count":1}'></textarea>
+                <label for="debugObjectDisabledMessage">Disabled / Locked Message</label>
+                <input id="debugObjectDisabledMessage" type="text" placeholder="鍵がかかっている。">
+                <label class="debug-checkbox">
+                  <input id="debugObjectRunEventBeforeMove" type="checkbox">
+                  Run Door Event Before Move
+                </label>
+                <label for="debugObjectPuzzleId">Puzzle ID</label>
+                <input id="debugObjectPuzzleId" type="text" placeholder="clock_puzzle">
+                <label for="debugObjectPuzzleType">Puzzle Type</label>
+                <select id="debugObjectPuzzleType">
+                  <option value="clock">clock</option>
+                  <option value="piano">piano</option>
+                  <option value="passcode">passcode</option>
+                  <option value="generic">generic</option>
+                </select>
+                <label for="debugObjectPuzzleBackground">Puzzle Background</label>
+                <input id="debugObjectPuzzleBackground" type="text" placeholder="clock_closeup.png">
+              </div>
+              <div class="row">
+                <button id="debugSaveObject" class="secondary" type="button">Save Object</button>
+                <button id="debugSaveInteractionEvent" class="secondary" type="button">Save Event</button>
+                <button id="debugDeleteInteractionEvent" class="secondary" type="button">Delete Event</button>
+                <button id="debugSaveInteractionPuzzle" class="secondary" type="button">Save Puzzle</button>
+                <button id="debugDeleteInteractionPuzzle" class="secondary" type="button">Delete Puzzle</button>
+                <button id="debugDeleteObject" class="secondary" type="button">Delete Object</button>
+                <button id="debugClearSelection" class="secondary" type="button">Clear Selection</button>
+              </div>
+              <p id="debugObjectStatus"></p>
+            </section>
+            <div class="debug-editors">
+              <section class="debug-editor-panel">
+                <div class="section-header">
+                  <h3>Event Editor</h3>
+                  <button id="debugSaveEvents" class="secondary" type="button">Save Events</button>
+                </div>
+                <textarea id="debugEventsJson" spellcheck="false"></textarea>
+                <p id="debugEventsStatus"></p>
+              </section>
+              <section class="debug-editor-panel">
+                <div class="section-header">
+                  <h3>State Editor</h3>
+                  <div class="row">
+                    <button id="debugSaveState" class="secondary" type="button">Save State</button>
+                    <button id="debugResetRuntimeState" class="secondary" type="button">Reset Runtime State</button>
+                    <button id="debugCopyInitialState" class="secondary" type="button">Copy Initial State to Runtime State</button>
+                  </div>
+                </div>
+                <textarea id="debugStateJson" spellcheck="false"></textarea>
+                <p id="debugStateStatus"></p>
+              </section>
+              <section class="debug-editor-panel">
+                <div class="section-header">
+                  <h3>Puzzle Editor</h3>
+                  <button id="debugSavePuzzles" class="secondary" type="button">Save Puzzles</button>
+                </div>
+                <textarea id="debugPuzzlesJson" spellcheck="false"></textarea>
+                <p id="debugPuzzlesStatus"></p>
+              </section>
+            </div>
           </div>
         </section>
 
